@@ -83,20 +83,44 @@ void handleRoot() {
 </head>
 <body>
 <div class="container">
-  <h1>Benga Wifi Killer X </h1>
-  <button onclick="scanNetworks()">Scan Networks</button>
-  <div id="networks"></div>
-  <div id="attack-control" style="display:none; margin-top:20px;">
-    <h2>Attack Control</h2>
-    <p>Target: <span id="target-ssid"></span></p>
-    <p>Duration: <input type="number" id="duration" value="10" min="1" max="60"> seconds</p>
-    <button onclick="startAttack()">Start Attack</button>
-    <button onclick="stopAttack()">Stop Attack</button>
-  </div>
+  <header style="text-align: center; margin-bottom: 30px;">
+    <h1 style="margin-bottom: 5px;">Benga Wifi Killer X</h1>
+    <p style="color: #666;">Network Security Assessment Tool</p>
+  </header>
+  
+  <section style="background-color: #f9f9f9; padding: 20px; border-radius: 8px; margin-bottom: 30px;">
+    <h2 style="margin-top: 0;">Network Scanner</h2>
+    <button onclick="scanNetworks()" style="background-color: #4CAF50; color: white;">Scan Networks</button>
+    <div id="networks" style="margin-top: 20px;"></div>
+  </section>
+  
+  <section id="attack-control" style="display:none; background-color: #fff7f7; padding: 20px; border-radius: 8px; border-left: 4px solid #ff5252;">
+    <h2 style="margin-top: 0; color: #d32f2f;">Attack Control</h2>
+    
+    <div style="display: grid; grid-template-columns: auto 1fr; gap: 12px; margin-bottom: 20px;">
+      <strong>Target:</strong>
+      <span id="target-ssid" style="font-weight: bold; color: #d32f2f;"></span>
+      
+      <strong>Duration:</strong>
+      <div>
+        <input type="number" id="duration" value="10" min="1" max="60" style="padding: 8px; width: 80px;">
+        <span>seconds</span>
+      </div>
+    </div>
+    
+    <div style="display: flex; gap: 10px;">
+      <button onclick="startAttack()" style="background-color: #d32f2f; color: white; flex: 1;">Start Attack</button>
+      <button onclick="stopAttack()" style="background-color: #333; color: white; flex: 1;">Stop Attack</button>
+    </div>
+    
+    <div id="attack-status" style="margin-top: 15px; padding: 10px; background-color: #ffeaea; display: none;"></div>
+  </section>
 </div>
 
 <script>
 function scanNetworks() {
+  document.getElementById('networks').innerHTML = '<p style="color: #666; font-style: italic;">Scanning networks...</p>';
+  
   fetch('/scan')
     .then(response => response.json())
     .then(data => {
@@ -105,17 +129,29 @@ function scanNetworks() {
         return;
       }
       
-      let table = '<table><tr><th>SSID</th><th>BSSID</th><th>Channel</th><th>Signal</th><th>Action</th></tr>';
+      let table = `<table>
+        <thead>
+          <tr>
+            <th>SSID</th>
+            <th>BSSID</th>
+            <th>Channel</th>
+            <th>Signal</th>
+            <th>Action</th>
+          </tr>
+        </thead>
+        <tbody>`;
+      
       data.forEach(network => {
         table += `<tr>
-          <td>${network.ssid}</td>
-          <td>${network.bssid}</td>
+          <td><strong>${network.ssid}</strong></td>
+          <td><code>${network.bssid}</code></td>
           <td>${network.channel}</td>
           <td>${network.rssi} dBm</td>
-          <td><button onclick="selectTarget('${network.bssid}', '${network.ssid}')">Select</button></td>
+          <td><button onclick="selectTarget('${network.bssid}', '${network.ssid}')" style="background-color: #2196F3; color: white;">Select</button></td>
         </tr>`;
       });
-      table += '</table>';
+      
+      table += '</tbody></table>';
       document.getElementById('networks').innerHTML = table;
     });
 }
@@ -123,18 +159,39 @@ function scanNetworks() {
 function selectTarget(bssid, ssid) {
   document.getElementById('target-ssid').textContent = ssid;
   document.getElementById('attack-control').style.display = 'block';
+  document.getElementById('attack-status').style.display = 'none';
   window.selectedBSSID = bssid;
 }
 
 function startAttack() {
   const duration = document.getElementById('duration').value;
+  const statusEl = document.getElementById('attack-status');
+  
+  statusEl.style.display = 'block';
+  statusEl.innerHTML = `<span style="color: #d32f2f;">Attacking ${document.getElementById('target-ssid').textContent} for ${duration} seconds...</span>`;
+  
   fetch(`/start?bssid=${encodeURIComponent(window.selectedBSSID)}&duration=${duration}`)
-    .then(() => alert('Attack started!'));
+    .then(() => {
+      statusEl.innerHTML = `<span style="color: #388E3C;">Attack started successfully!</span>`;
+    })
+    .catch(() => {
+      statusEl.innerHTML = `<span style="color: #d32f2f;">Error starting attack!</span>`;
+    });
 }
 
 function stopAttack() {
+  const statusEl = document.getElementById('attack-status');
+  
+  statusEl.style.display = 'block';
+  statusEl.innerHTML = `<span>Stopping attack...</span>`;
+  
   fetch('/stop')
-    .then(() => alert('Attack stopped!'));
+    .then(() => {
+      statusEl.innerHTML = `<span style="color: #388E3C;">Attack stopped successfully!</span>`;
+    })
+    .catch(() => {
+      statusEl.innerHTML = `<span style="color: #d32f2f;">Error stopping attack!</span>`;
+    });
 }
 </script>
 </body>
